@@ -1,36 +1,124 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Bursa Açık Veri Platformu
 
-## Getting Started
+Bursa'nın **canlı açık verilerini** tek bir yerde toplayan, **harita** üzerinde gösteren ve **yapay zekâ asistanı** ile doğal dilde sorgulanabilen bir açık veri platformu.
 
-First, run the development server:
+> "Son bir haftada Bursa'da deprem oldu mu?", "Halde domates kaç lira?", "Altınşehir'e en yakın toplanma alanı nerede?"
+> Asistan ilgili veri setini sorgular, yanıtı yazar ve sonucu haritada işaretler.
+
+## Özellikler
+
+- **Canlı harita**: Depremler, ilçe bazında hava kalitesi, afet toplanma alanları, parklar, ücretsiz Wi-Fi noktaları ve ilçe sınırları ayrı katmanlar olarak açılıp kapatılabilir. Canlı katmanlar 5 dakikada bir kendiliğinden yenilenir.
+- **LLM asistanı (tool calling)**: Model, soruyu yanıtlamak için platformun araçlarını çağırır (`deprem_sorgula`, `hal_fiyati`, `en_yakin_bul` vb.). Araçlar hem veriyi döndürür hem de haritaya ne yapılacağını söyler: yakınlaştırma, vurgulama, işaretçi koyma, panel açma. Model sayı uydurmaz; her yanıt gerçek veriye dayanır.
+- **Değiştirilebilir LLM katmanı**: Tek bir ortam değişkeniyle Gemini, Groq, Ollama (yerel), OpenAI veya Claude arasında geçiş yapılır. Varsayılan sağlayıcı, ücretsiz katmanı olan Gemini'dir.
+- **Göstergeler**: Baraj doluluk oranı (12 aylık grafik), günlük hal fiyatları (aranabilir tablo) ve güncel etkinlikler.
+- **Veri kataloğu**: Her veri setinin kaynağı, güncellenme sıklığı, kayıt sayısı ve son çekim zamanı tek sayfada görünür. Her set JSON veya CSV olarak indirilebilir ve REST API üzerinden kullanılabilir.
+- **Mobil uyumlu** arayüz, Türkçe karakter duyarsız arama (`nilufer` → Nilüfer).
+
+## Veri kaynakları
+
+| Veri seti | Kaynak | Güncelleme |
+|---|---|---|
+| Depremler (son 30 gün) | AFAD Deprem API | 5 dk (canlı) |
+| Hava kalitesi + hava durumu (17 ilçe) | Open-Meteo (CAMS/ECMWF) | 30 dk (canlı) |
+| Baraj doluluk oranı + 2021'den bugüne seri | BUSKİ / Bursa Büyükşehir | Günlük |
+| Hal fiyatları | Bursa Büyükşehir Belediyesi | Günlük |
+| Etkinlikler | Bursa Büyükşehir Belediyesi | Saatlik |
+| Afet toplanma alanları (1.206 alan) | Bursa BB CBS | Statik |
+| İlçe sınırları, parklar, Wi-Fi noktaları | Bursa BB Açık Veri Portalı | Statik |
+
+Bursa Büyükşehir verileri [acikyesil.bursa.bel.tr](https://acikyesil.bursa.bel.tr) portalındaki API'lerden çekilir. Hiçbir kaynak API anahtarı gerektirmez.
+
+## Mimari
+
+```
+Tarayıcı (Next.js + MapLibre)
+  │   harita katmanları  ── GET /api/data/:id ──┐
+  │   sohbet            ── POST /api/chat ──────┤
+  ▼                                             ▼
+Next.js Route Handlers ──► LLM katmanı (Gemini / Groq / Ollama / OpenAI / Claude)
+  │                              │  araç çağrısı
+  │                              ▼
+  └──────────────► Araçlar (src/lib/tools.ts) ──► Veri katmanı (src/lib/datasets.ts)
+                                                      │  TTL önbelleği
+                                                      ▼
+                                        AFAD · Open-Meteo · Bursa BB API'leri
+```
+
+- **Veri katmanı** (`src/lib/datasets.ts`): Her kaynak için bir yükleyici. Ham veri temizlenir ve standart GeoJSON veya tabloya dönüştürülür. Sonuç, veri setine özel süreyle (TTL) bellekte tutulur. Kaynak geçici olarak çökerse son başarılı veri sunulmaya devam eder.
+- **Araçlar** (`src/lib/tools.ts`): LLM'in çağırabileceği fonksiyonlar. Her araç JSON Schema ile tanımlanır ve `{ result, actions }` döndürür. `result` modele gider, `actions` ise haritaya uygulanır.
+- **LLM katmanı** (`src/lib/llm/`): Her sağlayıcı kendi yerel mesaj biçimiyle araç döngüsünü yürütür ve dışarıya tek bir `run()` arayüzü sunar. Yeni bir sağlayıcı eklemek tek bir dosya yazmak demektir.
+
+## Kurulum
+
+Gereksinimler: Node.js 20+
+
+```bash
+npm install
+cp .env.example .env.local
+```
+
+**Ücretsiz Gemini anahtarı:** [Google AI Studio](https://aistudio.google.com/apikey) üzerinden bir API anahtarı oluşturun ve `.env.local` içindeki `GEMINI_API_KEY` alanına yapıştırın. Kredi kartı gerekmez.
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Uygulama http://localhost:3000 adresinde açılır. Harita, katmanlar, göstergeler ve veri kataloğu anahtar olmadan da çalışır; anahtar yalnızca asistan için gereklidir.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### LLM sağlayıcısını değiştirmek
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`.env.local` içinde:
 
-## Learn More
+| Sağlayıcı | Ayar | Not |
+|---|---|---|
+| Gemini (varsayılan) | `LLM_PROVIDER=gemini` + `GEMINI_API_KEY` | Ücretsiz katman |
+| Groq | `LLM_PROVIDER=groq` + `GROQ_API_KEY` | Ücretsiz katman, çok hızlı |
+| Ollama | `LLM_PROVIDER=ollama` | Tamamen yerel ve ücretsiz; tool calling destekleyen bir model gerekir (ör. `qwen3:8b`) |
+| OpenAI | `LLM_PROVIDER=openai` + `OPENAI_API_KEY` | Ücretli |
+| Claude | `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` | Ücretli |
 
-To learn more about Next.js, take a look at the following resources:
+Model adı `LLM_MODEL` ile değiştirilebilir. Gemini modeli yoğun olduğunda (503) asistan otomatik olarak `LLM_FALLBACK_MODEL` modeline geçer (varsayılan: `gemini-flash-lite-latest`). Değişiklikten sonra sunucuyu yeniden başlatın.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## API
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Uç nokta | Açıklama |
+|---|---|
+| `GET /api/datasets` | Veri kataloğu: kaynak, kayıt sayısı, son çekim zamanı, hata durumu |
+| `GET /api/data/:id` | Veri setinin kendisi (GeoJSON veya JSON) |
+| `GET /api/data/:id?format=csv` | CSV olarak indirme (Excel uyumlu) |
+| `POST /api/chat` | `{ messages, context }` alır; `{ reply, actions, trace }` döndürür |
 
-## Deploy on Vercel
+`:id` değerleri: `depremler`, `hava-kalitesi`, `baraj-doluluk`, `hal-fiyatlari`, `etkinlikler`, `toplanma-alanlari`, `ilce-sinirlari`, `parklar`, `wifi-noktalari`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Proje yapısı
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/
+  app/
+    page.tsx                 Harita + asistan ana ekranı
+    veri-setleri/page.tsx    Veri kataloğu
+    api/data/[id]/route.ts   Veri seti uç noktası (JSON/CSV)
+    api/datasets/route.ts    Katalog uç noktası
+    api/chat/route.ts        LLM asistanı
+  components/                MapView, ChatPanel, LayerPanel, InfoCards, StatStrip…
+  lib/
+    datasets.ts              Kaynak yükleyicileri + katalog
+    tools.ts                 LLM araçları
+    llm/                     Sağlayıcıdan bağımsız LLM katmanı
+    cache.ts, geo.ts         Önbellek ve coğrafi yardımcılar
+```
+
+## Teknik notlar
+
+- AFAD API'si saatleri **UTC** olarak verir (Kandilli kayıtlarıyla karşılaştırılarak doğrulandı). Arayüzde Türkiye saatine çevrilir.
+- Baraj serisinde 2025 sonbaharında görülen %0 değerleri, kullanılabilir suyun tükendiğini (ölü hacim seviyesi) ya da o gün ölçüm girilmediğini gösterebilir. Veri olduğu gibi sunulur ve arayüzde bu not belirtilir.
+- Hava kalitesi, ilçe sınırlarının alan ağırlıklı merkezleri için Open-Meteo'dan tek istekte çekilir.
+- Gemini'nin ücretsiz katmanında dakikalık ve günlük istek limitleri vardır; tek bir soru, araç çağrılarıyla birlikte 2–3 istek harcar. Ücretsiz katmanda Google girdileri model geliştirmek için kullanabilir.
+- MapLibre GL v6 harita işlemlerini ayrı bir worker'da yapar. `npm install` sonrasında worker dosyası `public/` klasörüne otomatik kopyalanır.
+
+## Geliştirme fikirleri
+
+- Veri geçmişini saklamak (ör. SQLite/PostGIS) ve zaman içindeki değişimi göstermek
+- Yanıtları akış (streaming) olarak göstermek
+- Deprem bildirimleri (belirli bir büyüklüğün üzerinde)
+- İBB benzeri trafik ve toplu taşıma verileri yayınlandığında yeni katmanlar eklemek
