@@ -71,7 +71,6 @@ export default function DatasetCatalog() {
                   [String(list.length), "veri seti"],
                   [String(liveCount), "canlı kaynak"],
                   [recordCount.toLocaleString("tr-TR"), "kayıt"],
-                  ["0", "API anahtarı gerekir"],
                 ].map(([v, t]) => (
                   <div key={t}>
                     <dt className="sr-only">{t}</dt>
