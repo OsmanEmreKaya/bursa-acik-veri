@@ -49,7 +49,7 @@ export const TOOLS: Tool[] = [
   {
     name: "deprem_sorgula",
     description:
-      "AFAD verisinden Bursa ve çevresindeki son depremleri getirir (en fazla son 30 gün). Sonuçları haritada işaretler.",
+      "AFAD verisinden son depremleri getirir (en fazla son 30 gün): Bursa il sınırı içindeki tüm depremler ve il dışında olup Bursa'da hissedilebilecek büyüklükteki depremler (Bursa sınırına 30 km içinde M3+, 100 km içinde M4+, 200 km içinde M5+). Her deprem için Bursa içinde olup olmadığı ve sınıra uzaklığı döner. Sonuçları haritada işaretler.",
     parameters: {
       type: "object",
       properties: {
@@ -70,7 +70,7 @@ export const TOOLS: Tool[] = [
         return (
           new Date(p.time).getTime() >= since &&
           p.mag >= minMag &&
-          (!args.sadece_bursa || normalizeTr(p.province) === "bursa") &&
+          (!args.sadece_bursa || p.inBursa) &&
           (!ilce || normalizeTr(p.district).includes(ilce))
         );
       });
@@ -93,6 +93,8 @@ export const TOOLS: Tool[] = [
             derinlik_km: f.properties.depth,
             yer: f.properties.place,
             zaman: trTime(f.properties.time),
+            bursa_ici: f.properties.inBursa,
+            bursa_sinirina_uzaklik_km: f.properties.inBursa ? undefined : f.properties.distanceKm,
           })),
           not: hits.length > 15 ? `Büyüklüğe göre ilk 15 gösteriliyor (toplam ${hits.length}).` : undefined,
         },

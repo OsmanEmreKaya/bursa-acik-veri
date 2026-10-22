@@ -16,5 +16,7 @@ export type MapAction =
   | { type: "fitBounds"; bounds: [number, number, number, number] }
   | { type: "showLayer"; layer: LayerId }
   | { type: "highlight"; layer: LayerId; ids: number[] }
+  // Öğenin bilgi kutusunu açar; kutu kapanınca vurgu kalkar.
+  | { type: "focus"; layer: LayerId; id: number }
   | { type: "marker"; center: [number, number]; label: string }
   | { type: "openPanel"; panel: PanelId; query?: string };

@@ -36,6 +36,29 @@ function outerRings(geometry: Geometry): number[][][] {
   return geometry.coordinates.map((poly) => poly[0]);
 }
 
+/** Nokta, alanın dış halkalarından birinin içinde mi (ışın yöntemi). */
+export function containsPoint(geometry: Geometry, [x, y]: LngLat): boolean {
+  if (geometry.type === "Point") return false;
+  return outerRings(geometry).some((ring) => {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  });
+}
+
+/** Noktanın alanların sınırına en kısa uzaklığı (km); sınır köşelerine olan uzaklıkla yaklaşık hesaplanır. */
+export function distanceToEdgeKm(geometries: Geometry[], p: LngLat): number {
+  let best = Infinity;
+  for (const g of geometries)
+    for (const ring of outerRings(g))
+      for (const v of ring) best = Math.min(best, haversineKm(p, [v[0], v[1]]));
+  return best;
+}
+
 /** Alan ağırlıklı merkez (en büyük halka). Nokta için noktanın kendisi. */
 export function centroid(geometry: Geometry): LngLat {
   if (geometry.type === "Point") return [geometry.coordinates[0], geometry.coordinates[1]];

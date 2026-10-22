@@ -1,11 +1,19 @@
 import { cached, cacheInfo, fetchJson } from "./cache";
-import { centroid, type Feature, type FeatureCollection, roundCoords, titleCaseTr } from "./geo";
+import { centroid, containsPoint, distanceToEdgeKm, type Feature, type FeatureCollection, normalizeTr, roundCoords, titleCaseTr } from "./geo";
 
 const BAPI = "https://bapi.bursa.bel.tr/apigateway";
 const MIN = 60_000;
 
-// Bursa ili ve yakın çevresini kapsayan kutu (deprem sorgusu için).
+// Bursa ili ve yakın çevresini kapsayan kutu: buradaki tüm depremler sorgulanır, il içindekiler her büyüklükte gösterilir.
 const QUAKE_BOX = { minlat: 39.55, maxlat: 40.75, minlon: 27.9, maxlon: 30.2 };
+// Bursa sınırının ~200 km çevresi: il dışındaki depremler yalnızca Bursa'da hissedilebilecek büyüklükteyse gösterilir.
+const FELT_BOX = { minlat: 37.8, maxlat: 42.5, minlon: 25.6, maxlon: 32.5 };
+// Bursa sınırına uzaklığa göre hissedilmek için gereken en küçük büyüklük (hissedilme raporlarındaki tipik yarıçaplara göre kaba eşikler).
+export const FELT_RULES = [
+  { km: 30, mag: 3 },
+  { km: 100, mag: 4 },
+  { km: 200, mag: 5 },
+];
 
 // ---------- Tipler ----------
 
@@ -18,6 +26,8 @@ export type QuakeProps = {
   province: string;
   district: string;
   time: string; // ISO, UTC
+  inBursa: boolean;
+  distanceKm: number; // Bursa sınırına uzaklık; il içinde 0
 };
 
 export type AirProps = {
@@ -78,33 +88,55 @@ type DatasetMeta = {
 
 // ---------- Yükleyiciler ----------
 
-async function loadQuakes(): Promise<FeatureCollection<QuakeProps>> {
-  const end = new Date();
-  const start = new Date(end.getTime() - 30 * 24 * 3600 * 1000);
+type AfadEvent = {
+  eventID: string; latitude: string; longitude: string; depth: string; type: string; magnitude: string;
+  location: string; province: string | null; district: string | null; date: string;
+};
+
+function fetchAfad(box: typeof QUAKE_BOX, start: Date, end: Date, minMag?: number) {
   const iso = (d: Date) => d.toISOString().slice(0, 19);
   const q = new URLSearchParams({
     start: iso(start),
     end: iso(end),
-    minlat: String(QUAKE_BOX.minlat),
-    maxlat: String(QUAKE_BOX.maxlat),
-    minlon: String(QUAKE_BOX.minlon),
-    maxlon: String(QUAKE_BOX.maxlon),
+    minlat: String(box.minlat),
+    maxlat: String(box.maxlat),
+    minlon: String(box.minlon),
+    maxlon: String(box.maxlon),
     orderby: "timedesc",
   });
-  type Raw = {
-    eventID: string; latitude: string; longitude: string; depth: string; type: string; magnitude: string;
-    location: string; province: string | null; district: string | null; date: string;
-  };
-  const raw = await fetchJson<Raw[]>(`https://servisnet.afad.gov.tr/apigateway/deprem/apiv2/event/filter?${q}`);
-  return {
-    type: "FeatureCollection",
-    features: raw.map((r) => ({
+  if (minMag !== undefined) q.set("minmag", String(minMag));
+  return fetchJson<AfadEvent[]>(`https://servisnet.afad.gov.tr/apigateway/deprem/apiv2/event/filter?${q}`);
+}
+
+const feltInBursa = (mag: number, km: number) => FELT_RULES.some((r) => km <= r.km && mag >= r.mag);
+
+async function loadQuakes(): Promise<FeatureCollection<QuakeProps>> {
+  const end = new Date();
+  const start = new Date(end.getTime() - 30 * 24 * 3600 * 1000);
+  const minFelt = Math.min(...FELT_RULES.map((r) => r.mag));
+  const [near, wide, districts] = await Promise.all([
+    fetchAfad(QUAKE_BOX, start, end),
+    fetchAfad(FELT_BOX, start, end, minFelt),
+    getDataset("ilce-sinirlari"),
+  ]);
+  const shapes = districts.features.map((f) => f.geometry);
+  const byId = new Map([...near, ...wide].map((r) => [r.eventID, r]));
+
+  const features: Feature<QuakeProps>[] = [];
+  for (const r of byId.values()) {
+    const point: [number, number] = [Number(r.longitude), Number(r.latitude)];
+    const mag = Number(r.magnitude);
+    // AFAD'ın il bilgisi bazen boş gelir (ör. kıyıya yakın kayıtlar); ilçe sınırlarıyla da kontrol edilir.
+    const inBursa = normalizeTr(r.province ?? "") === "bursa" || shapes.some((g) => containsPoint(g, point));
+    const distanceKm = inBursa ? 0 : Math.round(distanceToEdgeKm(shapes, point));
+    if (!inBursa && !feltInBursa(mag, distanceKm)) continue;
+    features.push({
       type: "Feature",
       id: Number(r.eventID),
-      geometry: { type: "Point", coordinates: [Number(r.longitude), Number(r.latitude)] },
+      geometry: { type: "Point", coordinates: point },
       properties: {
         id: r.eventID,
-        mag: Number(r.magnitude),
+        mag,
         magType: r.type,
         depth: Number(r.depth),
         place: r.location,
@@ -112,9 +144,13 @@ async function loadQuakes(): Promise<FeatureCollection<QuakeProps>> {
         district: r.district ?? "",
         // AFAD saatleri UTC verir (Kandilli kayıtlarıyla karşılaştırılarak doğrulandı).
         time: `${r.date}Z`,
+        inBursa,
+        distanceKm,
       },
-    })),
-  };
+    });
+  }
+  features.sort((a, b) => b.properties.time.localeCompare(a.properties.time));
+  return { type: "FeatureCollection", features };
 }
 
 async function loadDistricts(): Promise<FeatureCollection<{ ad: string; merkez: [number, number] }>> {
@@ -299,7 +335,8 @@ export const DATASETS: (DatasetMeta & { load: () => Promise<unknown> })[] = [
   {
     id: "depremler",
     title: "Depremler (son 30 gün)",
-    description: "Bursa ve çevresinde (39.55–40.75 K, 27.9–30.2 D) son 30 günde kaydedilen depremler. Büyüklük, derinlik ve konum bilgisi içerir.",
+    description:
+      "Son 30 günde Bursa il sınırları içinde kaydedilen tüm depremler ile il dışında olup Bursa'da hissedilebilecek büyüklükteki depremler (30 km içinde M3+, 100 km içinde M4+, 200 km içinde M5+). Büyüklük, derinlik, konum ve Bursa'ya uzaklık bilgisi içerir.",
     publisher: "AFAD Deprem Dairesi",
     sourceUrl: "https://deprem.afad.gov.tr/event-catalog",
     upstream: "https://servisnet.afad.gov.tr/apigateway/deprem/apiv2/event/filter",

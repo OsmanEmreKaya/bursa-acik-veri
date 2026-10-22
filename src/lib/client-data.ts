@@ -55,22 +55,23 @@ export function timeAgo(iso: string | Date): string {
 export const trDateTime = (iso: string) =>
   new Date(iso).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul", dateStyle: "medium", timeStyle: "short" });
 
-export function aqiColor(aqi: number | null): string {
-  if (aqi === null) return "#9ca3af";
-  if (aqi <= 20) return "#22c55e";
-  if (aqi <= 40) return "#84cc16";
-  if (aqi <= 60) return "#eab308";
-  if (aqi <= 80) return "#f97316";
-  if (aqi <= 100) return "#ef4444";
-  return "#7e22ce";
+// Avrupa Hava Kalitesi İndeksi (EAQI) seviyeleri: değer düştükçe hava temizdir.
+// `color` haritadaki dolgu rengi, `ink` aynı rengin beyaz zeminde okunaklı koyu tonu.
+export const AQI_LEVELS = [
+  { max: 20, range: "0–20", color: "#22c55e", ink: "#15803d", text: "Çok iyi" },
+  { max: 40, range: "21–40", color: "#84cc16", ink: "#4d7c0f", text: "İyi" },
+  { max: 60, range: "41–60", color: "#eab308", ink: "#a16207", text: "Orta" },
+  { max: 80, range: "61–80", color: "#f97316", ink: "#c2410c", text: "Kötü" },
+  { max: 100, range: "81–100", color: "#ef4444", ink: "#b91c1c", text: "Çok kötü" },
+  { max: Infinity, range: "100+", color: "#7e22ce", ink: "#7e22ce", text: "Son derece kötü" },
+];
+
+const aqiLevel = (aqi: number) => AQI_LEVELS.find((l) => aqi <= l.max)!;
+
+export function aqiInk(aqi: number | null): string {
+  return aqi === null ? "#74857b" : aqiLevel(aqi).ink;
 }
 
 export function aqiText(aqi: number | null): string {
-  if (aqi === null) return "Bilinmiyor";
-  if (aqi <= 20) return "Çok iyi";
-  if (aqi <= 40) return "İyi";
-  if (aqi <= 60) return "Orta";
-  if (aqi <= 80) return "Kötü";
-  if (aqi <= 100) return "Çok kötü";
-  return "Son derece kötü";
+  return aqi === null ? "Bilinmiyor" : aqiLevel(aqi).text;
 }

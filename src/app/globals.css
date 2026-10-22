@@ -5,10 +5,43 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Bursa'nın yeşil-beyaz renkleri. Zemin hafif yeşil tonlu bir açık gri, kartlar beyaz, tek vurgu rengi
+   "Bursa yeşili". Sınıflarda bg-base, bg-panel, bg-card, text-ink, border-line, bg-accent… olarak geçer. */
+@theme {
+  --color-base: #eef3f0;
+  --color-panel: #f7faf8;
+  --color-card: #ffffff;
+  --color-card-hover: #f2f8f4;
+  --color-line: #e1e9e4;
+  --color-line-strong: #cbd8d0;
+  --color-ink: #12261b;
+  --color-dim: #4a5d52;
+  --color-faint: #74857b;
+  --color-accent: #00843d;
+  --color-accent-strong: #006b31;
+  --color-accent-ink: #ffffff;
+}
+
+:root {
+  color-scheme: light;
+}
+
 body {
-  background: #f8fafc;
-  color: #0f172a;
+  background: var(--color-base);
+  color: var(--color-ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+::selection {
+  background: rgb(0 132 61 / 0.18);
+}
+
+/* İnce, zemine karışan kaydırma çubukları. Katman içinde ki Tailwind sınıfları (ör. gizleme) bunu ezebilsin. */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
 }
 
 /* Canlı veri göstergesi */
@@ -26,25 +59,37 @@ body {
 }
 
 /* Asistan yanıtları */
-.md p { margin: 0.25rem 0; line-height: 1.5; }
+.md p { margin: 0.25rem 0; line-height: 1.55; }
 .md ul, .md ol { margin: 0.35rem 0; padding-left: 1.15rem; }
 .md ul { list-style: disc; }
 .md ol { list-style: decimal; }
-.md li { margin: 0.15rem 0; line-height: 1.45; }
-.md a { color: #0f766e; text-decoration: underline; }
-.md code { background: #f1f5f9; border-radius: 4px; padding: 0 4px; font-size: 0.85em; }
+.md li { margin: 0.15rem 0; line-height: 1.5; }
+.md li::marker { color: var(--color-faint); }
+.md strong { color: var(--color-ink); font-weight: 600; }
+.md a { color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px; }
+.md code { background: var(--color-base); border: 1px solid var(--color-line); border-radius: 4px; padding: 0 4px; font-size: 0.85em; }
 
 /* Harita açılır pencereleri */
 .data-popup .maplibregl-popup-content {
+  border: 1px solid var(--color-line);
   border-radius: 12px;
   padding: 12px 14px;
-  box-shadow: 0 10px 25px rgb(15 23 42 / 0.15);
+  box-shadow: 0 10px 25px rgb(18 38 27 / 0.12);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
-.data-popup h4 { font-weight: 600; font-size: 13px; margin: 0 18px 6px 0; color: #0f172a; }
-.data-popup p { font-size: 12px; color: #475569; margin: 4px 0; }
-.data-popup .muted { color: #64748b; }
-.data-popup div { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 1px 0; }
-.data-popup div span { color: #64748b; }
-.data-popup div b { font-weight: 500; color: #0f172a; text-align: right; }
-.data-popup .maplibregl-popup-close-button { font-size: 18px; padding: 2px 8px; }
+.data-popup h4 { font-weight: 600; font-size: 13px; margin: 0 18px 6px 0; color: var(--color-ink); }
+.data-popup p { font-size: 12px; color: var(--color-dim); margin: 4px 0; }
+.data-popup .muted { color: var(--color-faint); }
+/* Yalnızca satırlar; genel bir `div` seçicisi MapLibre'nin kendi kutusunu da yatay dizip taşırıyordu. */
+.data-popup .row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 1px 0; }
+.data-popup .row span { color: var(--color-faint); }
+.data-popup .row b { font-weight: 500; color: var(--color-ink); text-align: right; font-variant-numeric: tabular-nums; }
+.data-popup .maplibregl-popup-close-button { font-size: 18px; padding: 2px 8px; color: var(--color-faint); }
+.data-popup .maplibregl-popup-close-button:hover { background: transparent; color: var(--color-ink); }
+
+/* Yakınlaştırma düğmeleri */
+.maplibregl-ctrl-group {
+  border: 1px solid var(--color-line);
+  box-shadow: 0 2px 6px rgb(18 38 27 / 0.08) !important;
+}
+.maplibregl-ctrl-group button:hover { background-color: var(--color-card-hover) !important; }

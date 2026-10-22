@@ -1,16 +1,19 @@
 "use client";
 
-import type { GeoJSONSource, Map as MlMap, MapLayerMouseEvent, Marker as MlMarker } from "maplibre-gl";
+import type { GeoJSONSource, Map as MlMap, MapLayerMouseEvent, Marker as MlMarker, Popup as MlPopup } from "maplibre-gl";
 import { type Ref, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { aqiText, fetchDataset, timeAgo, trDateTime } from "@/lib/client-data";
+import { AQI_LEVELS, aqiText, fetchDataset, timeAgo, trDateTime } from "@/lib/client-data";
 import type { FeatureCollection } from "@/lib/geo";
 import type { LayerId } from "@/lib/map-actions";
+import { Icon } from "./Icons";
 
 export type MapHandle = {
   flyTo: (center: [number, number], zoom: number) => void;
   fitBounds: (b: [number, number, number, number]) => void;
   setMarker: (center: [number, number] | null, label?: string) => void;
   getCenter: () => [number, number] | undefined;
+  // Öğenin bilgi kutusunu açar ve kutu açık kaldığı sürece vurgular.
+  focus: (layer: LayerId, id: number) => void;
 };
 
 type Props = {
@@ -18,9 +21,14 @@ type Props = {
   layers: Record<LayerId, boolean>;
   highlights: Partial<Record<LayerId, number[]>>;
   onLayerStatus?: (id: LayerId, status: { count?: number; error?: string; updatedAt?: Date }) => void;
+  // Haritanın üstünde bir bilgi kartı açıkken lejant kartın arkasından taşmasın diye gizlenir.
+  hideLegend?: boolean;
 };
 
-const STYLE = "https://tiles.openfreemap.org/styles/positron";
+// CARTO'nun CDN'i OpenFreeMap'e göre belirgin biçimde hızlı (karo başına ~0,1 sn'ye karşı 2-20 sn).
+const STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+// Altlığın gri zeminini sitenin hafif yeşil tonlu zeminine yaklaştırır.
+const BASEMAP_BG = "#f2f6f3";
 const LIVE_REFRESH_MS = 5 * 60_000;
 const LIVE_LAYERS: LayerId[] = ["depremler", "hava-kalitesi"];
 
@@ -34,7 +42,18 @@ const SUBLAYERS: Record<LayerId, string[]> = {
   depremler: ["quake-circle"],
 };
 
-const hl = (on: unknown, off: unknown) => ["case", ["boolean", ["feature-state", "hl"], false], on, off];
+// Gizliyken Next.js'in önbelleğinden düşen sayfaların haritaları efekt temizliğine uğramaz;
+// yeni harita kurulurken DOM'dan kopmuş olanları burada kapatıyoruz.
+const liveMaps = new Set<MlMap>();
+
+// İki tür vurgu var: `hl` asistanın işaret ettikleri (yeni yanıtla sıfırlanır), `focus` bilgi kutusu açık olan öğe
+// (kutu kapanınca kalkar). Görünüşleri aynı.
+const hl = (on: unknown, off: unknown) => [
+  "case",
+  ["any", ["boolean", ["feature-state", "hl"], false], ["boolean", ["feature-state", "focus"], false]],
+  on,
+  off,
+];
 
 function addLayers(map: MlMap) {
   const empty = { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection;
@@ -43,16 +62,16 @@ function addLayers(map: MlMap) {
 
   map.addLayer({
     id: "ilce-fill", type: "fill", source: "ilce-sinirlari",
-    paint: { "fill-color": "#0f766e", "fill-opacity": hl(0.12, 0) as never },
+    paint: { "fill-color": "#00843d", "fill-opacity": hl(0.1, 0) as never },
   });
   map.addLayer({
     id: "ilce-line", type: "line", source: "ilce-sinirlari",
-    paint: { "line-color": "#0f766e", "line-width": hl(3, 1.2) as never, "line-opacity": 0.7 },
+    paint: { "line-color": "#00843d", "line-width": hl(2.5, 1.1) as never, "line-opacity": hl(0.95, 0.55) as never },
   });
 
   map.addLayer({
     id: "toplanma-fill", type: "fill", source: "toplanma-alanlari", minzoom: 12,
-    paint: { "fill-color": hl("#16a34a", "#22c55e") as never, "fill-opacity": hl(0.6, 0.3) as never },
+    paint: { "fill-color": hl("#15803d", "#22c55e") as never, "fill-opacity": hl(0.55, 0.3) as never },
   });
   map.addLayer({
     id: "toplanma-line", type: "line", source: "toplanma-alanlari", minzoom: 12,
@@ -63,7 +82,7 @@ function addLayers(map: MlMap) {
     paint: {
       "circle-radius": hl(7, 3) as never,
       "circle-color": "#16a34a",
-      "circle-stroke-color": "#fff",
+      "circle-stroke-color": hl("#12261b", "#ffffff") as never,
       "circle-stroke-width": hl(2, 0.5) as never,
     },
   });
@@ -73,8 +92,8 @@ function addLayers(map: MlMap) {
     paint: {
       "circle-radius": hl(10, 6) as never,
       "circle-color": "#65a30d",
-      "circle-stroke-color": hl("#1a2e05", "#fff") as never,
-      "circle-stroke-width": 2,
+      "circle-stroke-color": hl("#12261b", "#ffffff") as never,
+      "circle-stroke-width": hl(2.5, 1.5) as never,
     },
   });
   map.addLayer({
@@ -82,8 +101,8 @@ function addLayers(map: MlMap) {
     paint: {
       "circle-radius": hl(9, 5) as never,
       "circle-color": "#2563eb",
-      "circle-stroke-color": hl("#1e1b4b", "#fff") as never,
-      "circle-stroke-width": 1.5,
+      "circle-stroke-color": hl("#12261b", "#ffffff") as never,
+      "circle-stroke-width": hl(2.5, 1.5) as never,
     },
   });
 
@@ -95,8 +114,8 @@ function addLayers(map: MlMap) {
         "step", ["coalesce", ["get", "aqi"], -1],
         "#9ca3af", 0, "#22c55e", 20.5, "#84cc16", 40.5, "#eab308", 60.5, "#f97316", 80.5, "#ef4444", 100.5, "#7e22ce",
       ],
-      "circle-opacity": 0.85,
-      "circle-stroke-color": hl("#111827", "#ffffff") as never,
+      "circle-opacity": 0.9,
+      "circle-stroke-color": hl("#12261b", "#ffffff") as never,
       "circle-stroke-width": hl(3, 2) as never,
     },
   });
@@ -104,11 +123,11 @@ function addLayers(map: MlMap) {
     id: "aqi-label", type: "symbol", source: "hava-kalitesi",
     layout: {
       "text-field": ["to-string", ["coalesce", ["get", "aqi"], "–"]],
-      "text-font": ["Noto Sans Bold"],
+      "text-font": ["Open Sans Bold"],
       "text-size": 12,
       "text-allow-overlap": true,
     },
-    paint: { "text-color": "#111827" },
+    paint: { "text-color": "#12261b" },
   });
 
   map.addLayer({
@@ -118,8 +137,8 @@ function addLayers(map: MlMap) {
       "circle-color": [
         "step", ["get", "ageHours"], "#dc2626", 24, "#f97316", 168, "#facc15",
       ],
-      "circle-opacity": hl(0.95, 0.7) as never,
-      "circle-stroke-color": hl("#111827", "#7f1d1d") as never,
+      "circle-opacity": hl(0.95, 0.75) as never,
+      "circle-stroke-color": hl("#12261b", "#ffffff") as never,
       "circle-stroke-width": hl(3, 1) as never,
     },
   });
@@ -128,10 +147,10 @@ function addLayers(map: MlMap) {
 function popupHtml(layer: LayerId, p: Record<string, unknown>): string {
   const esc = (v: unknown) =>
     String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-  const row = (k: string, v: unknown) => (v === null || v === undefined || v === "" ? "" : `<div><span>${k}</span><b>${esc(v)}</b></div>`);
+  const row = (k: string, v: unknown) => (v === null || v === undefined || v === "" ? "" : `<div class="row"><span>${k}</span><b>${esc(v)}</b></div>`);
   switch (layer) {
     case "depremler":
-      return `<h4>M${esc(p.mag)} · ${esc(p.place)}</h4>${row("Zaman", trDateTime(String(p.time)))}${row("Ne zaman", timeAgo(String(p.time)))}${row("Derinlik", `${p.depth} km`)}${row("Kaynak", "AFAD")}`;
+      return `<h4>Deprem · M${esc(p.mag)}</h4><p class="muted">${esc(p.place)}</p>${p.inBursa ? "" : row("Konum", `Bursa dışında · ~${p.distanceKm} km`)}${row("Zaman", trDateTime(String(p.time)))}${row("Ne zaman", timeAgo(String(p.time)))}${row("Derinlik", `${p.depth} km`)}${row("Kaynak", "AFAD")}`;
     case "hava-kalitesi":
       return `<h4>${esc(p.ilce)} · ${aqiText(p.aqi as number | null)}</h4>${row("Avrupa AQI", p.aqi)}${row("PM2.5", p.pm2_5 != null ? `${p.pm2_5} µg/m³` : null)}${row("PM10", p.pm10 != null ? `${p.pm10} µg/m³` : null)}${row("NO₂", p.no2 != null ? `${p.no2} µg/m³` : null)}${row("Sıcaklık", p.temperature != null ? `${p.temperature} °C` : null)}${row("Nem", p.humidity != null ? `%${p.humidity}` : null)}${row("Rüzgar", p.wind != null ? `${p.wind} km/sa` : null)}`;
     case "toplanma-alanlari":
@@ -145,13 +164,22 @@ function popupHtml(layer: LayerId, p: Record<string, unknown>): string {
   }
 }
 
-export default function MapView({ ref, layers, highlights, onLayerStatus }: Props) {
+export default function MapView({ ref, layers, highlights, onLayerStatus, hideLegend }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
   const markerRef = useRef<MlMarker | null>(null);
   const libRef = useRef<typeof import("maplibre-gl") | null>(null);
   const loaded = useRef<Set<LayerId>>(new Set());
   const appliedHl = useRef<Partial<Record<LayerId, number[]>>>({});
+  const popupRef = useRef<MlPopup | null>(null);
+  const focused = useRef<{ layer: LayerId; id: number } | null>(null);
+  const dataRef = useRef<Partial<Record<LayerId, GeoJSON.FeatureCollection>>>({});
+
+  function setFocus(map: MlMap, next: { layer: LayerId; id: number } | null) {
+    if (focused.current) setFlag(map, focused.current.layer, focused.current.id, "focus", false);
+    focused.current = next;
+    if (next) setFlag(map, next.layer, next.id, "focus", true);
+  }
   const [ready, setReady] = useState(false);
   const statusCb = useRef(onLayerStatus);
   useEffect(() => {
@@ -166,7 +194,7 @@ export default function MapView({ ref, layers, highlights, onLayerStatus }: Prop
       markerRef.current = null;
       const lib = libRef.current;
       if (!center || !lib || !mapRef.current) return;
-      markerRef.current = new lib.Marker({ color: "#0f172a" })
+      markerRef.current = new lib.Marker({ color: "#00843d" })
         .setLngLat(center)
         .setPopup(new lib.Popup({ offset: 24 }).setText(label ?? ""))
         .addTo(mapRef.current);
@@ -175,11 +203,26 @@ export default function MapView({ ref, layers, highlights, onLayerStatus }: Prop
       const c = mapRef.current?.getCenter();
       return c ? [c.lng, c.lat] : undefined;
     },
+    focus: (layer, id) => {
+      const map = mapRef.current;
+      const popup = popupRef.current;
+      const f = dataRef.current[layer]?.features.find((x) => x.id === id);
+      if (!map || !popup || !f) return;
+      const at = f.geometry.type === "Point" ? (f.geometry.coordinates as [number, number]) : (f.properties as { merkez: [number, number] }).merkez;
+      popup.setLngLat(at).setHTML(popupHtml(layer, f.properties as Record<string, unknown>)).addTo(map);
+      setFocus(map, { layer, id });
+    },
   }));
 
   // Haritayı bir kez oluştur.
   useEffect(() => {
+    const el = container.current;
     let cancelled = false;
+    // Sayfaya geri dönüldü: harita gizliyken yaşamaya devam etti, yeniden kurmaya gerek yok.
+    if (mapRef.current) {
+      mapRef.current.resize();
+      return;
+    }
     (async () => {
       const lib = await import("maplibre-gl");
       if (cancelled || !container.current) return;
@@ -191,22 +234,50 @@ export default function MapView({ ref, layers, highlights, onLayerStatus }: Prop
         // Bursa il sınırlarını kapsayan başlangıç görünümü
         bounds: [27.95, 39.55, 30.05, 40.65],
         fitBoundsOptions: { padding: 20 },
-        attributionControl: { compact: true },
+        attributionControl: false,
       });
       map.addControl(new lib.NavigationControl({ showCompass: false }), "top-right");
+      // Kaynak bilgisi sağ altta, asistan maskotunun altında durur; açılınca sola doğru genişler.
+      // Sol altta ölçek ve onun üstünde lejant yer alır.
+      map.addControl(new lib.AttributionControl({ compact: true }), "bottom-right");
       map.addControl(new lib.ScaleControl({ unit: "metric" }), "bottom-left");
       mapRef.current = map;
+      for (const m of liveMaps) {
+        if (!m.getContainer().isConnected) {
+          m.remove();
+          liveMaps.delete(m);
+        }
+      }
+      liveMaps.add(map);
 
-      map.on("load", () => {
+      // "load" altlık karolarının tamamı inene kadar beklediği için veri katmanlarını stil
+      // hazır olur olmaz ekliyoruz; karo sunucusu yavaşsa bile veriler hemen görünür.
+      map.once("style.load", () => {
+        const bg = map.getStyle().layers.find((l) => l.type === "background");
+        if (bg) map.setPaintProperty(bg.id, "background-color", BASEMAP_BG);
         addLayers(map);
-        const popup = new lib.Popup({ closeButton: true, maxWidth: "300px", className: "data-popup" });
+        // MapLibre'nin closeOnClick seçeneği, kutu açıkken başka bir öğeye tıklanınca yeni açılan kutuyu aynı tıklamada
+        // kapatıyor (olay dinleyicileri kopyalanarak çağrılıyor). Kapanmayı aşağıda kendimiz yönetiyoruz.
+        const popup = new lib.Popup({ closeButton: true, closeOnClick: false, maxWidth: "300px", className: "data-popup" });
+        popupRef.current = popup;
+        // Kutu çarpıyla ya da haritada boş bir yere tıklanarak kapanınca vurgu da kalkar.
+        popup.on("close", () => setFocus(map, null));
+        const clickable = Object.values(SUBLAYERS)
+          .flat()
+          .filter((sub) => sub !== "ilce-fill" && sub !== "aqi-label");
+        map.on("click", (e) => {
+          const onMap = clickable.filter((id) => map.getLayer(id));
+          if (!map.queryRenderedFeatures(e.point, { layers: onMap }).length) popup.remove();
+        });
         for (const [layer, subs] of Object.entries(SUBLAYERS) as [LayerId, string[]][]) {
           for (const sub of subs) {
-            if (sub === "ilce-fill" || sub === "aqi-label") continue;
+            if (!clickable.includes(sub)) continue;
             map.on("click", sub, (e: MapLayerMouseEvent) => {
               const f = e.features?.[0];
               if (!f) return;
               popup.setLngLat(e.lngLat).setHTML(popupHtml(layer, f.properties as Record<string, unknown>)).addTo(map);
+              // addTo önceki kutuyu kapatıp eski vurguyu kaldırır; yenisi ondan sonra uygulanır.
+              if (f.id !== undefined) setFocus(map, { layer, id: Number(f.id) });
             });
             map.on("mouseenter", sub, () => (map.getCanvas().style.cursor = "pointer"));
             map.on("mouseleave", sub, () => (map.getCanvas().style.cursor = ""));
@@ -217,7 +288,12 @@ export default function MapView({ ref, layers, highlights, onLayerStatus }: Prop
     })();
     return () => {
       cancelled = true;
-      mapRef.current?.remove();
+      // Cache Components açıkken Next.js başka sayfaya geçince bu sayfayı <Activity> ile gizler:
+      // efektler temizlenir ama DOM yerinde kalır. Haritayı yalnızca kapsayıcı DOM'dan gerçekten
+      // çıktığında yok ediyoruz; aksi hâlde geri dönüldüğünde katmanlar ve görünüm kaybolur.
+      if (el?.isConnected || !mapRef.current) return;
+      liveMaps.delete(mapRef.current);
+      mapRef.current.remove();
       mapRef.current = null;
     };
   }, []);
@@ -242,6 +318,7 @@ export default function MapView({ ref, layers, highlights, onLayerStatus }: Prop
           };
         }
         (map.getSource(id) as GeoJSONSource | undefined)?.setData(fc);
+        dataRef.current[id] = fc;
         if (id === "toplanma-alanlari") {
           (map.getSource("toplanma-merkez") as GeoJSONSource | undefined)?.setData({
             type: "FeatureCollection",
@@ -255,7 +332,8 @@ export default function MapView({ ref, layers, highlights, onLayerStatus }: Prop
         }
         statusCb.current?.(id, { count: fc.features.length, updatedAt: new Date() });
         // Yeni veri gelince vurgular sıfırlanır; yeniden uygula.
-        for (const fid of appliedHl.current[id] ?? []) setHl(map, id, fid, true);
+        for (const fid of appliedHl.current[id] ?? []) setFlag(map, id, fid, "hl", true);
+        if (focused.current?.layer === id) setFlag(map, id, focused.current.id, "focus", true);
       } catch (e) {
         statusCb.current?.(id, { error: (e as Error).message });
       }
@@ -281,8 +359,8 @@ export default function MapView({ ref, layers, highlights, onLayerStatus }: Prop
     const map = mapRef.current;
     if (!ready || !map) return;
     for (const id of Object.keys(SUBLAYERS) as LayerId[]) {
-      for (const fid of appliedHl.current[id] ?? []) setHl(map, id, fid, false);
-      for (const fid of highlights[id] ?? []) setHl(map, id, fid, true);
+      for (const fid of appliedHl.current[id] ?? []) setFlag(map, id, fid, "hl", false);
+      for (const fid of highlights[id] ?? []) setFlag(map, id, fid, "hl", true);
     }
     appliedHl.current = highlights;
   }, [ready, highlights]);
@@ -291,11 +369,68 @@ export default function MapView({ ref, layers, highlights, onLayerStatus }: Prop
   return (
     <div className="absolute inset-0">
       <div ref={container} className="h-full w-full" />
+      <MapLegend layers={layers} hidden={hideLegend} />
     </div>
   );
 }
 
-function setHl(map: MlMap, layer: LayerId, id: number, on: boolean) {
-  map.setFeatureState({ source: layer, id }, { hl: on });
-  if (layer === "toplanma-alanlari") map.setFeatureState({ source: "toplanma-merkez", id }, { hl: on });
+const QUAKE_LEGEND = [
+  { c: "#dc2626", t: "Son 24 saat" },
+  { c: "#f97316", t: "Son 7 gün" },
+  { c: "#facc15", t: "Daha eski" },
+];
+
+function MapLegend({ layers, hidden }: { layers: Record<LayerId, boolean>; hidden?: boolean }) {
+  // Lejant kapalı başlar; kullanıcı istediğinde açar.
+  const aqi = layers["hava-kalitesi"];
+  const quake = layers.depremler;
+
+  return (
+    <details
+      className={`group absolute bottom-12 left-3 rounded-2xl border border-line bg-card/95 shadow-lg shadow-ink/5 backdrop-blur open:w-64 ${(aqi || quake) && !hidden ? "" : "hidden"}`}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium text-ink select-none [&::-webkit-details-marker]:hidden">
+        <Icon name="layers" className="h-3.5 w-3.5 text-accent" />
+        Lejant
+        <Icon name="arrowRight" className="ml-auto h-3 w-3 text-faint transition group-open:rotate-90" />
+      </summary>
+      <div className="space-y-3 border-t border-line px-3 py-2.5 text-[11px] leading-snug text-dim">
+        {aqi && (
+          <div>
+            <p className="font-medium text-ink">Hava kalitesi</p>
+            <p>Dairedeki sayı, Avrupa Hava Kalitesi İndeksi&apos;dir (EAQI). Değer düştükçe hava daha temizdir.</p>
+            <ul className="mt-1 space-y-0.5">
+              {AQI_LEVELS.map((l) => (
+                <li key={l.range} className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: l.color }} />
+                  <span className="w-11 font-mono text-[10.5px] text-ink">{l.range}</span>
+                  {l.text}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {quake && (
+          <div>
+            <p className="font-medium text-ink">Depremler</p>
+            <p>Daire büyüdükçe deprem büyüklüğü (M) artar; renk ne zaman olduğunu gösterir.</p>
+            <p className="mt-1 text-faint">İl dışındaki depremler yalnızca Bursa&apos;da hissedilebilecek büyüklükteyse gösterilir.</p>
+            <ul className="mt-1 flex flex-wrap gap-x-2.5 gap-y-0.5">
+              {QUAKE_LEGEND.map((g) => (
+                <li key={g.t} className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: g.c }} />
+                  {g.t}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function setFlag(map: MlMap, layer: LayerId, id: number, key: "hl" | "focus", on: boolean) {
+  map.setFeatureState({ source: layer, id }, { [key]: on });
+  if (layer === "toplanma-alanlari") map.setFeatureState({ source: "toplanma-merkez", id }, { [key]: on });
 }
