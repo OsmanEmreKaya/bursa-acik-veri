@@ -271,7 +271,13 @@ export const TOOLS: Tool[] = [
       } else if (args.tur === "park") {
         layer = "parklar";
         const data = await getDataset("parklar");
-        items = data.features.map((f) => ({ id: Number(f.id), ad: f.properties.ad, detay: f.properties.adres, c: f.geometry.coordinates as LngLat }));
+        // Belediyenin öne çıkan parklarında adres var; OpenStreetMap'ten gelenlerde yalnızca ilçe biliniyor.
+        items = data.features.map((f) => ({
+          id: Number(f.id),
+          ad: f.properties.ad,
+          detay: f.properties.adres ?? `${f.properties.ilce} · ${f.properties.kaynak}`,
+          c: f.geometry.coordinates as LngLat,
+        }));
       } else {
         layer = "wifi-noktalari";
         const data = await getDataset("wifi-noktalari");
@@ -286,7 +292,7 @@ export const TOOLS: Tool[] = [
         .slice(0, adet);
       return {
         result: {
-          kaynak: "Bursa Büyükşehir Belediyesi Açık Veri",
+          kaynak: layer === "parklar" ? "Bursa Büyükşehir Belediyesi Açık Veri ve OpenStreetMap" : "Bursa Büyükşehir Belediyesi Açık Veri",
           baslangic: originLabel,
           sonuclar: nearest.map((n) => ({
             ad: n.ad,

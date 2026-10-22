@@ -27,7 +27,10 @@ const GROUPS: { title: string; live?: boolean; layers: LayerDef[] }[] = [
     title: "Kent verileri",
     layers: [
       { id: "toplanma-alanlari", title: "Afet toplanma alanları", source: "Bursa BB", icon: "users", swatch: "#16a34a" },
-      { id: "parklar", title: "Parklar ve kent ormanları", source: "Bursa BB", icon: "tree", swatch: "#65a30d" },
+      {
+        id: "parklar", title: "Parklar", source: "Bursa BB · OpenStreetMap", icon: "tree", swatch: "#15803d",
+        legend: [{ c: "#15803d", t: "Öne çıkan (Bursa BB)" }, { c: "#84cc16", t: "Diğer parklar (OSM)" }],
+      },
       { id: "wifi-noktalari", title: "Ücretsiz Wi-Fi", source: "Bursa BB", icon: "wifi", swatch: "#2563eb" },
       { id: "ilce-sinirlari", title: "İlçe sınırları", source: "Bursa BB", icon: "map", swatch: "#00843d" },
     ],

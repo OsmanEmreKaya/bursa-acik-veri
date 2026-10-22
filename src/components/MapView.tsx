@@ -89,11 +89,14 @@ function addLayers(map: MlMap) {
 
   map.addLayer({
     id: "park-circle", type: "circle", source: "parklar",
+    // Belediyenin öne çıkan parkları büyük ve koyu yeşil, OpenStreetMap'teki diğer parklar küçük ve açık yeşil;
+    // üst üste geldiklerinde öne çıkanlar üstte kalır.
+    layout: { "circle-sort-key": ["case", ["get", "onecikan"], 1, 0] },
     paint: {
-      "circle-radius": hl(10, 6) as never,
-      "circle-color": "#65a30d",
+      "circle-radius": ["case", ["get", "onecikan"], hl(10, 7), hl(7, 4)] as never,
+      "circle-color": ["case", ["get", "onecikan"], "#15803d", "#84cc16"],
       "circle-stroke-color": hl("#12261b", "#ffffff") as never,
-      "circle-stroke-width": hl(2.5, 1.5) as never,
+      "circle-stroke-width": ["case", ["get", "onecikan"], hl(2.5, 2), hl(2, 1)] as never,
     },
   });
   map.addLayer({
@@ -156,7 +159,9 @@ function popupHtml(layer: LayerId, p: Record<string, unknown>): string {
     case "toplanma-alanlari":
       return `<h4>${esc(p.ad)}</h4>${row("Mahalle", p.mahalle)}${row("İlçe", p.ilce)}<p class="muted">Afet toplanma alanı</p>`;
     case "parklar":
-      return `<h4>${esc(p.ad)}</h4><p>${esc(String(p.ozet ?? "").slice(0, 180))}</p>${row("Adres", p.adres)}`;
+      return p.onecikan
+        ? `<h4>${esc(p.ad)}</h4><p>${esc(String(p.ozet ?? "").slice(0, 180))}</p>${row("Adres", p.adres)}${row("İlçe", p.ilce)}${row("Kaynak", "Bursa BB · öne çıkan park")}`
+        : `<h4>${esc(p.ad)}</h4>${row("İlçe", p.ilce)}${row("Kaynak", "OpenStreetMap")}`;
     case "wifi-noktalari":
       return `<h4>${esc(p.ad)}</h4><p class="muted">Ücretsiz belediye Wi-Fi noktası</p>`;
     case "ilce-sinirlari":

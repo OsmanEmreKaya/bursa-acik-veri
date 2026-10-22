@@ -18,15 +18,18 @@ Bursa'nın **canlı açık verilerini** tek bir yerde toplayan, **harita** üzer
 
 | Veri seti | Kaynak | Güncelleme |
 |---|---|---|
-| Depremler (son 30 gün) | AFAD Deprem API | 5 dk (canlı) |
+| Depremler (son 30 gün; Bursa içi + Bursa'da hissedilebilecek çevre depremleri) | AFAD Deprem API | 5 dk (canlı) |
 | Hava kalitesi + hava durumu (17 ilçe) | Open-Meteo (CAMS/ECMWF) | 30 dk (canlı) |
 | Baraj doluluk oranı + 2021'den bugüne seri | BUSKİ / Bursa Büyükşehir | Günlük |
 | Hal fiyatları | Bursa Büyükşehir Belediyesi | Günlük |
 | Etkinlikler | Bursa Büyükşehir Belediyesi | Saatlik |
 | Afet toplanma alanları (1.206 alan) | Bursa BB CBS | Statik |
-| İlçe sınırları, parklar, Wi-Fi noktaları | Bursa BB Açık Veri Portalı | Statik |
+| İlçe sınırları, Wi-Fi noktaları | Bursa BB Açık Veri Portalı | Statik |
+| Parklar (belediyenin öne çıkanları + diğer parklar) | Bursa BB turizm kataloğu + OpenStreetMap | Belediye: günlük · OSM: kayıtlı veri |
 
 Bursa Büyükşehir verileri [acikyesil.bursa.bel.tr](https://acikyesil.bursa.bel.tr) portalındaki API'lerden çekilir. Hiçbir kaynak API anahtarı gerektirmez.
+
+Belediyenin park veri seti yalnızca turizm kataloğundaki öne çıkan parkları içerdiği için parklar katmanı bunları OpenStreetMap'teki diğer parklarla birleştirir. OSM verisi Overpass API'den bir kez çekilip `src/data/osm-parks.json` olarak saklanır; Overpass sunucuları zaman zaman yanıt vermediğinden canlı çekilmez. Yenilemek için `npm run veri:parklar` çalıştırın. Park verisi © OpenStreetMap katkıcıları, [ODbL](https://www.openstreetmap.org/copyright).
 
 ## Mimari
 

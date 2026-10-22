@@ -1,5 +1,6 @@
 import { cached, cacheInfo, fetchJson } from "./cache";
-import { centroid, containsPoint, distanceToEdgeKm, type Feature, type FeatureCollection, normalizeTr, roundCoords, titleCaseTr } from "./geo";
+import osmParks from "../data/osm-parks.json";
+import { bbox, centroid, containsPoint, distanceToEdgeKm, type Feature, type FeatureCollection, haversineKm, type LngLat, normalizeTr, roundCoords, titleCaseTr } from "./geo";
 
 const BAPI = "https://bapi.bursa.bel.tr/apigateway";
 const MIN = 60_000;
@@ -274,21 +275,68 @@ function decodeEntity(e: string): string {
   return map[e] ?? " ";
 }
 
-async function loadParks(): Promise<FeatureCollection<{ ad: string; adres: string; ozet: string; gorsel: string | null }>> {
+export type ParkProps = {
+  ad: string;
+  adres: string | null;
+  ozet: string | null;
+  gorsel: string | null;
+  onecikan: boolean; // Belediyenin turizm kataloğundaki öne çıkan parklardan biri mi
+  kaynak: string;
+  ilce: string | null;
+};
+
+// "Merinos Parkı" ile "Merinos Park" gibi yazımları aynı saymak için ad anahtarı.
+const parkKey = (s: string) => normalizeTr(s).replace(/\b(parki|park|kent|ormani|bahcesi)\b/g, "").replace(/\s+/g, "");
+
+async function loadParks(): Promise<FeatureCollection<ParkProps>> {
   type Raw = { title: string; address: string; content_summary: string; image_url?: string };
-  const raw = await fetchJson<FeatureCollection<Raw>>(`${BAPI}/acik_veri_turizm/parklar`);
+  const [raw, districts] = await Promise.all([
+    fetchJson<FeatureCollection<Raw>>(`${BAPI}/acik_veri_turizm/parklar`),
+    getDataset("ilce-sinirlari"),
+  ]);
+  // Önce kutu kontrolü, sonra çokgen: ~1.200 park için her ilçe çokgenini taramak gereksiz yavaş.
+  const shapes = districts.features.map((f) => ({ ad: f.properties.ad, g: f.geometry, b: bbox(f.geometry) }));
+  const ilceOf = ([x, y]: LngLat) =>
+    shapes.find((d) => x >= d.b[0] && x <= d.b[2] && y >= d.b[1] && y <= d.b[3] && containsPoint(d.g, [x, y]))?.ad ?? null;
+
+  const featured = raw.features.map((f) => {
+    const c = f.geometry.coordinates as LngLat;
+    return {
+      c,
+      key: parkKey(f.properties.title),
+      props: {
+        ad: f.properties.title.trim(),
+        adres: f.properties.address || null,
+        ozet: stripHtml(f.properties.content_summary ?? "") || null,
+        gorsel: f.properties.image_url ?? null,
+        onecikan: true,
+        kaynak: "Bursa Büyükşehir Belediyesi",
+        ilce: ilceOf(c),
+      },
+    };
+  });
+
+  // OSM'deki park, öne çıkan bir parkın kopyasıysa (çok yakın ya da yakında ve aynı adlı) atlanır.
+  const isDuplicate = (ad: string | null, c: LngLat) =>
+    featured.some((f) => {
+      const km = haversineKm(f.c, c);
+      return km < 0.15 || (!!ad && km < 1.5 && parkKey(ad).length > 2 && parkKey(ad) === f.key);
+    });
+  const others = osmParks.parklar.flatMap((p) => {
+    const c = p.c as LngLat;
+    const ilce = ilceOf(c);
+    // Sorgu kutusu komşu illeri de kapsar; yalnızca Bursa ilçelerinin içindekiler alınır.
+    if (!ilce || isDuplicate(p.ad, c)) return [];
+    return [{ c, props: { ad: p.ad ?? "Park", adres: null, ozet: null, gorsel: null, onecikan: false, kaynak: "OpenStreetMap", ilce } }];
+  });
+
   return {
     type: "FeatureCollection",
-    features: raw.features.map((f, i) => ({
+    features: [...featured, ...others].map((p, i) => ({
       type: "Feature",
       id: i,
-      geometry: f.geometry,
-      properties: {
-        ad: f.properties.title,
-        adres: f.properties.address,
-        ozet: stripHtml(f.properties.content_summary ?? ""),
-        gorsel: f.properties.image_url ?? null,
-      },
+      geometry: { type: "Point", coordinates: p.c },
+      properties: p.props,
     })),
   };
 }
@@ -426,12 +474,12 @@ export const DATASETS: (DatasetMeta & { load: () => Promise<unknown> })[] = [
   },
   {
     id: "parklar",
-    title: "Parklar ve Kent Ormanları",
-    description: "Öne çıkan park, kent ormanı ve rekreasyon alanları; adres ve kısa açıklamayla.",
-    publisher: "Bursa Büyükşehir Belediyesi",
+    title: "Parklar",
+    description: `Bursa il sınırları içindeki parklar: belediyenin öne çıkan parkları (adres, açıklama ve görselle) ile OpenStreetMap'te kayıtlı diğer parklar. OSM verisi ${osmParks.cekim.slice(0, 10)} tarihli kayıttan alınır, © OpenStreetMap katkıcıları (ODbL).`,
+    publisher: "Bursa Büyükşehir Belediyesi, OpenStreetMap katkıcıları",
     sourceUrl: `${PORTAL}/parklar`,
     upstream: `${BAPI}/acik_veri_turizm/parklar`,
-    refresh: "Günde bir",
+    refresh: "Belediye parkları günde bir; OSM kaydı elle (npm run veri:parklar)",
     ttlMs: 24 * 60 * MIN,
     live: false,
     kind: "geojson",
